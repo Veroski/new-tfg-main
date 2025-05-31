@@ -1,8 +1,7 @@
 "use client"
 
-import type React from "react"
-import { createContext, useContext, useState, useEffect } from "react"
-
+import React, { createContext, useContext, useState, useEffect } from "react"
+import { getUsuarioActual } from "@/lib/api"
 interface User {
   id: string
   email: string
@@ -12,63 +11,124 @@ interface User {
 
 interface AuthContextType {
   user: User | null
+  token: string | null
+  loading: boolean
   login: (email: string, password: string) => Promise<boolean>
   register: (email: string, password: string, name: string) => Promise<boolean>
   logout: () => void
-  loading: boolean
+  setTokenFromOAuth: (token: string) => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Cargar token y usuario desde localStorage
   useEffect(() => {
-    // Simular carga del usuario desde localStorage
-    const savedUser = localStorage.getItem("user")
-    if (savedUser) {
-      setUser(JSON.parse(savedUser))
+    const storedToken = localStorage.getItem("auth_token")
+    if (storedToken) {
+      setToken(storedToken)
+      fetchUser(storedToken)
+    } else {
+      setLoading(false)
     }
-    setLoading(false)
   }, [])
 
+  // 🧠 Obtener el usuario actual desde el backend
+  const fetchUser = async (jwtToken: string) => {
+    try {
+      const res = await fetch(getUsuarioActual(), {
+        headers: {
+          Authorization: `Bearer ${jwtToken}`,
+        },
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        setUser(data)
+      } else {
+        logout()
+      }
+    } catch (err) {
+      logout()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+
+  // 🔐 Login con usuario/contraseña
   const login = async (email: string, password: string): Promise<boolean> => {
-    // Simular autenticación
-    if (email && password) {
-      const newUser: User = {
-        id: "1",
-        email,
-        name: email.split("@")[0],
-      }
-      setUser(newUser)
-      localStorage.setItem("user", JSON.stringify(newUser))
+    try {
+      const res = await fetch("http://localhost:8000/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      })
+
+      if (!res.ok) return false
+
+      const data = await res.json()
+      const jwtToken = data.token
+      localStorage.setItem("auth_token", jwtToken)
+      setToken(jwtToken)
+      await fetchUser(jwtToken)
+
       return true
+    } catch (err) {
+      return false
     }
-    return false
   }
 
+  // 🆕 Registro de usuario
   const register = async (email: string, password: string, name: string): Promise<boolean> => {
-    // Simular registro
-    if (email && password && name) {
-      const newUser: User = {
-        id: "1",
-        email,
-        name,
-      }
-      setUser(newUser)
-      localStorage.setItem("user", JSON.stringify(newUser))
+    try {
+      const res = await fetch("http://localhost:8000/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password, name }),
+      })
+
+      if (!res.ok) return false
+
+      const data = await res.json()
+      const jwtToken = data.token
+      localStorage.setItem("auth_token", jwtToken)
+      setToken(jwtToken)
+      await fetchUser(jwtToken)
+
       return true
+    } catch (err) {
+      return false
     }
-    return false
   }
 
+  // 🔓 Logout
   const logout = () => {
+    localStorage.removeItem("auth_token")
     setUser(null)
-    localStorage.removeItem("user")
+    setToken(null)
   }
 
-  return <AuthContext.Provider value={{ user, login, register, logout, loading }}>{children}</AuthContext.Provider>
+  // 🔁 Login desde Google OAuth (token ya generado)
+  const setTokenFromOAuth = (newToken: string) => {
+    localStorage.setItem("auth_token", newToken)
+    setToken(newToken)
+    fetchUser(newToken)
+  }
+
+  return (
+    <AuthContext.Provider value={{ user, token, loading, login, register, logout, setTokenFromOAuth }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {

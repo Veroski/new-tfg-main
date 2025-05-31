@@ -14,13 +14,14 @@ from googleapiclient.errors import HttpError
 from .auth_routes import get_current_user
 from app.utils.create_notebook import create_notebook
 import anyio
-
+from app.core.database import get_db
+from app.crud import user_crud
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
-
-# Función para obtener el servicio de Google Drive
 def get_drive_service(token):
+    print("🔑 TOKEN:", token)
     creds = Credentials(
         token=token.get("access_token"),
         refresh_token=token.get("refresh_token"),
@@ -31,32 +32,6 @@ def get_drive_service(token):
     )
     return build("drive", "v3", credentials=creds)
 
-
-# Función para crear o encontrar la carpeta principal en Google Drive
-async def get_or_create_folder(drive_service, folder_name):
-    # Buscar si la carpeta ya existe
-    response = drive_service.files().list(
-        q=f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
-        spaces='drive',
-        fields='files(id, name)'
-    ).execute()
-   
-    # Si la carpeta existe, devolver su ID
-    if response.get('files'):
-        return response.get('files')[0].get('id')
-   
-    # Si no existe, crear la carpeta
-    folder_metadata = {
-        'name': folder_name,
-        'mimeType': 'application/vnd.google-apps.folder'
-    }
-   
-    folder = drive_service.files().create(
-        body=folder_metadata,
-        fields='id'
-    ).execute()
-   
-    return folder.get('id')
 
 
 # Ruta para subir un notebook a Google Drive
@@ -201,96 +176,118 @@ async def list_notebooks(
         )
 
 
-# Nueva ruta para crear y subir un notebook directamente a Google Colab
+def get_drive_service_from_refresh(refresh_token: str):
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv("CLIENT_ID"),
+        client_secret=os.getenv("CLIENT_SECRET")
+    )
+    return build("drive", "v3", credentials=creds)
+
+
+async def get_or_create_folder(drive_service, folder_name: str):
+    response = drive_service.files().list(
+        q=f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+        spaces='drive',
+        fields='files(id, name)'
+    ).execute()
+
+    if response.get('files'):
+        return response['files'][0]['id']
+
+    folder_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+
+    folder = drive_service.files().create(
+        body=folder_metadata,
+        fields='id'
+    ).execute()
+
+    return folder.get('id')
+
+
 @router.post("/create_and_upload_notebook/{model_id:path}")
 async def create_and_upload_notebook(
     request: Request,
     model_id: str,
-    user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    session_user: dict = Depends(get_current_user)
 ):
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-   
-    token = request.session.get("token")
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No token available",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-   
-    try:
-        # Paso 1: Generar el notebook
-        from app.api.routes.hugging_face_routes import classifica_modelo_sync
-        
-        # Obtener información del modelo
-        model_info = await anyio.to_thread.run_sync(classifica_modelo_sync, model_id)
-        print("DEBUG model_info:", model_info)
+    if not session_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
-        
-        # Crear el notebook
+    # ✅ Buscar el usuario completo en la base de datos
+    from app.crud import user_crud
+    db_user = user_crud.get_user_by_email(db, session_user["email"])
+    if not db_user or not db_user.google_drive_token:
+        raise HTTPException(status_code=400, detail="No Google Drive token found")
+
+    try:
+        # 🧠 Obtener datos del modelo
+        from app.api.routes.hugging_face_routes import classifica_modelo_sync
+        model_info = await anyio.to_thread.run_sync(classifica_modelo_sync, model_id)
+        print("🧠 Modelo:", model_info)
+
+        # 📓 Crear notebook
         notebook = await anyio.to_thread.run_sync(create_notebook, model_id, model_info)
         if not isinstance(notebook, nbformat.NotebookNode):
             raise TypeError("create_notebook must return a nbformat.NotebookNode")
-        
-        # Paso 2: Guardar el notebook temporalmente
+
+        # 💾 Guardar temporalmente
         with tempfile.NamedTemporaryFile(suffix='.ipynb', delete=False) as temp_file:
             temp_file.write(nbformat.writes(notebook).encode())
             temp_notebook_path = temp_file.name
-        
-        # Paso 3: Subir el notebook a Google Drive
-        try:
-            drive_service = get_drive_service(token)
-            folder_name = os.getenv("DRIVE_FOLDER_NAME", "ColaboAutomation")
-            folder_id = await get_or_create_folder(drive_service, folder_name)
-            file_name = f"{model_id.replace('/', '_')}.ipynb"
-            
-            file_metadata = {
-                'name': file_name,
-                'parents': [folder_id]
-            }
+        print("📄 Notebook generado:", temp_notebook_path)
 
-            media = MediaFileUpload(
-                temp_notebook_path,
-                mimetype='application/x-ipynb+json',
-                resumable=True
-            )
+        # 🔑 Construir credenciales desde refresh_token guardado
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        creds = Credentials(
+            token=None,
+            refresh_token=db_user.google_drive_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("CLIENT_ID"),
+            client_secret=os.getenv("CLIENT_SECRET")
+        )
+        drive_service = build("drive", "v3", credentials=creds)
 
-            file = drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, webViewLink'
-            ).execute()
+        # 📁 Crear carpeta si no existe
+        folder_name = os.getenv("DRIVE_FOLDER_NAME", "ColaboAutomation")
+        folder_id = await get_or_create_folder(drive_service, folder_name)
 
-            file_id = file.get('id')
-            colab_link = f"https://colab.research.google.com/drive/{file_id}"
+        # ☁️ Subir a Google Drive
+        from googleapiclient.http import MediaFileUpload
+        file_name = f"{model_id.replace('/', '_')}.ipynb"
+        file_metadata = {"name": file_name, "parents": [folder_id]}
+        media = MediaFileUpload(temp_notebook_path, mimetype='application/x-ipynb+json', resumable=True)
 
-            os.unlink(temp_notebook_path)
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
 
-            return {
-                "file_id": file_id,
-                "colab_link": colab_link,
-                "model_id": model_id,
-                "status": "success"
-            }
+        file_id = file.get("id")
+        colab_link = f"https://colab.research.google.com/drive/{file_id}"
+        print("✅ Archivo subido:", colab_link)
 
-        except Exception:
-            if os.path.exists(temp_notebook_path):
-                os.unlink(temp_notebook_path)
-            raise
+        os.unlink(temp_notebook_path)
 
-       
+        return {
+            "file_id": file_id,
+            "colab_link": colab_link,
+            "model_id": model_id,
+            "status": "success"
+        }
+
     except HttpError as error:
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": f"Error de Google Drive: {str(error)}"}
-        )
+        print("❌ HttpError:", error)
+        return JSONResponse(status_code=500, content={"error": f"Google Drive error: {str(error)}"})
+
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": f"Error inesperado: {str(e)}"}
-        )
+        print("❌ Error inesperado:", e)
+        return JSONResponse(status_code=500, content={"error": f"Error inesperado: {str(e)}"})

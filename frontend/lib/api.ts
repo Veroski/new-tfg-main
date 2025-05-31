@@ -75,3 +75,8 @@ export const routeModel = (modelId: string): string => {
   // 🆕  único endpoint que construimos en el backend
   return `${API_BASE_URL}/huggingface/route_model/${encodeURIComponent(modelId)}`;
 };
+
+// 🆕 Ruta para obtener el usuario actual (autenticado)
+export const getUsuarioActual = (): string => {
+  return `${API_BASE_URL}/users/me`;
+};
