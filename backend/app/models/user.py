@@ -1,5 +1,5 @@
 # app/models/user.py
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, DateTime
 from .base import Base
 
 class User(Base):
@@ -11,4 +11,4 @@ class User(Base):
     google_id = Column(String, nullable=False, unique=True)
     google_drive_token = Column(String, nullable=True)        # ← Refresh token
     google_drive_access_token = Column(String, nullable=True) # ← Access token
-    google_drive_token_expiry = Column(String, nullable=True)
+    google_drive_token_expiry = Column(DateTime, nullable=True)

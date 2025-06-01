@@ -181,21 +181,24 @@ export default function ModeloDetalle() {
 
   /* -------- Acción: crear y subir notebook a Colab -------- */
   const handleCreateColabNotebook = async () => {
-    if (!isAuthenticated) {
-      // Redirigir al usuario a la página de login
-      window.location.href = iniciarLogin()
+
+    const token = localStorage.getItem("auth_token")
+
+    if (!token) {
+      // 🔁 Redirigir al sistema de login externo (OAuth)
+      window.location.href = "/auth"
       return
     }
 
     try {
       setCreatingColab(true)
       setColabLink(null)
-
+    
       const res = await fetch(crearYSubirNotebook(modelId), {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`, // ✅ Enviar token JWT
         },
       })
 
