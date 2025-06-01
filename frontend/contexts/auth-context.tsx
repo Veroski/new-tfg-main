@@ -1,7 +1,9 @@
 "use client"
 
 import React, { createContext, useContext, useState, useEffect } from "react"
-import { getUsuarioActual } from "@/lib/api"
+import { getUsuarioActual, API_BASE_URL } from "@/lib/api"
+
+
 interface User {
   id: string
   email: string
@@ -63,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 🔐 Login con usuario/contraseña
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      const res = await fetch("http://localhost:8000/auth/login", {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -88,7 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 🆕 Registro de usuario
   const register = async (email: string, password: string, name: string): Promise<boolean> => {
     try {
-      const res = await fetch("http://localhost:8000/auth/register", {
+      const res = await fetch(`${API_BASE_URL}/auth/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

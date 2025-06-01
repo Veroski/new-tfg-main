@@ -106,7 +106,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     jwt_token = create_access_token({"sub": db_user.email})
 
     # 🔁 Redirigir al frontend con el JWT
-    return RedirectResponse(url=f"http://localhost:3000/auth/callback?token={jwt_token}")
+    return RedirectResponse(url=f"{settings.frontend_url}/auth/callback?token={jwt_token}")
 
 
 

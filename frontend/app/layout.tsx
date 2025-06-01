@@ -1,11 +1,8 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
 import "./globals.css"
 import Header from "@/components/header"
 import { AuthProvider } from "@/contexts/auth-context"
-
-const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "Colab Automation",
@@ -19,7 +16,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body className={`${inter.className} bg-[#F9FAFB]`}>
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="bg-[#F9FAFB] font-inter">
         <AuthProvider>
           <Header />
           <main className="min-h-screen pt-20">{children}</main>

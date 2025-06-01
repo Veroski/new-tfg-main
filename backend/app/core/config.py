@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     db_port: int
     db_name: str  
     hash_secret_key: str
+    frontend_url: str
 
     @property
     def db_url(self) -> str:
