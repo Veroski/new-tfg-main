@@ -15,6 +15,9 @@ RUN npm install --legacy-peer-deps \
 # Copiar el resto del proyecto
 COPY . .
 # Build del proyecto Next.js
+ARG NEXT_PUBLIC_BACKEND_URL
+ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+
 RUN npm run build
 
 # Etapa 2: Producción
