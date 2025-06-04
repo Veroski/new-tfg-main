@@ -50,7 +50,7 @@ services:
     env: docker
     plan: free
     dockerfilePath: frontend/Dockerfile
-    buildCommandContext: frontend  # 👈 Esto indica que el contexto está en ./frontend/
+    dockerContext: frontend           # 👈 Esto sí es válido
     autoDeploy: true
     envVars:
       - key: NEXT_PUBLIC_BACKEND_URL
