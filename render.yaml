@@ -11,7 +11,7 @@ services:
     env: docker
     plan: free
     dockerfilePath: backend/Dockerfile
-    dockerContext: backend           # 👈 Esto arregla el error
+    dockerContext: backend 
     autoDeploy: true
     envVars:
       - key: DB_URL
