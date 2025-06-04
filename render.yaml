@@ -11,15 +11,13 @@ services:
     env: docker
     plan: free
     dockerfilePath: backend/Dockerfile
+    dockerContext: backend           # 👈 Esto arregla el error
     autoDeploy: true
     envVars:
-      # Base de datos (Render la inyecta automáticamente)
       - key: DB_URL
         fromDatabase:
           name: colabo-prod-db
           property: connectionString
-
-      # --- Secretos y configuración manual ---
       - key: TOKEN
         sync: false
       - key: CLIENT_ID
@@ -28,19 +26,16 @@ services:
         sync: false
       - key: REDIRECT_URI
         value: https://backend.onrender.com/auth/callback
-
       - key: APP_SECRET_KEY
         sync: false
       - key: HASH_SECRET_KEY
         sync: false
-
       - key: DRIVE_FOLDER_NAME
         value: ColaboAutomation
       - key: COLAB_URL
         value: https://colab.research.google.com/drive/XYZ
       - key: NOTEBOOK_ID
         value: XYZ
-
       - key: FRONTEND_URL
         value: https://frontend.onrender.com
 
