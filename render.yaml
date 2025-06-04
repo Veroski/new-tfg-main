@@ -37,7 +37,7 @@ services:
       - key: NOTEBOOK_ID
         value: XYZ
       - key: FRONTEND_URL
-        value: https://frontend.onrender.com
+        value: https://frontend-uwik.onrender.com
 
   # -------- FRONTEND (Next.js) ----------
   - type: web
@@ -49,4 +49,4 @@ services:
     autoDeploy: true
     envVars:
       - key: NEXT_PUBLIC_BACKEND_URL
-        value: https://backend.onrender.com
+        value: https://backend-15an.onrender.com
