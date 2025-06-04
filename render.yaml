@@ -25,7 +25,7 @@ services:
       - key: CLIENT_SECRET
         sync: false
       - key: REDIRECT_URI
-        value: https://backend.onrender.com/auth/callback
+        value: https://backend-15an.onrender.com/auth/callback
       - key: APP_SECRET_KEY
         sync: false
       - key: HASH_SECRET_KEY
