@@ -1,125 +1,84 @@
 from __future__ import annotations
+"""
+backend_selector.py – Simplified backend decision tree
+======================================================
+This rewrite focuses on **deterministic, format‑first** routing.  
+Given the myriad community checkpoints (GGUF, GPTQ, AWQ, ONNX, etc.) the
+most reliable signal for the correct runtime is the *weight format* itself.  
+We therefore drop heuristic rules that depended on model size or id and keep a
+small, explicit map from *format* → *backend*.
+
+If no rule matches we fall back to vanilla 🤗 *transformers* which is the
+widest‑supported interface.
+"""
 from dataclasses import dataclass
 from typing import Callable, List, Dict, Any
 
-# Constantes importadas del archivo original
-CTRANS_SUPPORTED = {
-    "llama", "gptj", "gpt_neox", "opt", "mpt", "falcon", "replit",
-    "pythia", "baichuan", "starcoder", "gpt_bigcode", "gemma",
-    "qwen", "internlm", "rwkv", "chatglm"
+# Tasks handled by 🧨 diffusers
+DIFFUSERS_TASKS = {
+    "text-to-image", "image-to-image", "image-to-text",
+    "text-to-video", "inpainting",
 }
-
-DIFFUSERS_TASKS = {"text-to-image", "image-to-image", "image-to-text", "text-to-video", "inpainting"}
 
 @dataclass
 class Rule:
-    """Regla para la selección de backend basada en predicados."""
+    """Predicate‑based rule used by the selector."""
+
     name: str
-    pred: Callable[[dict], bool]
+    pred: Callable[[Dict[str, Any]], bool]
     backend: str
-    score: int = 100  # mayor = mayor prioridad
+
 
 class BackendSelector:
-    """
-    Selector de backend basado en reglas.
-    
-    Utiliza un sistema de reglas ordenadas para determinar el backend más adecuado
-    para un modelo específico basado en sus características.
-    """
-    def __init__(self, info: dict):
+    """Very small rule engine → returns the first matching backend."""
+
+    def __init__(self, info: Dict[str, Any]):
         self.info = info
-        self.rules: List[Rule] = self._default_rules()
+        self._rules: List[Rule] = self._build_rules()
 
+    # ---------------------------------------------------------------------
+    # Public API
+    # ---------------------------------------------------------------------
     def recommend(self) -> str:
-        """
-        Recomienda el backend más adecuado basado en las reglas definidas.
-        
-        Returns:
-            str: Nombre del backend recomendado
-        """
-        candidates = [r for r in self.rules if r.pred(self.info)]
-        if not candidates:
-            return "transformers"  # fallback
-        # elige la de mayor puntuación (o la primera si empatan)
-        return sorted(candidates, key=lambda r: r.score, reverse=True)[0].backend
+        """Return the first backend whose predicate matches *info*."""
+        for rule in self._rules:
+            if rule.pred(self.info):
+                return rule.backend
+        # Fallback – vanilla 🤗 transformers works for most un‑quantised fp16/fp32 checkpoints
+        return "transformers"
 
-    def _default_rules(self) -> List[Rule]:
-        """
-        Define las reglas por defecto para la selección de backend.
-        
-        Returns:
-            List[Rule]: Lista de reglas ordenadas por prioridad
-        """
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _build_rules(self) -> List[Rule]:
+        """Hard‑coded, format‑centric rules sorted by priority."""
+
+        fmt = lambda *xs: (lambda i: i.get("weight_format", "") in xs)
+        contains = lambda s: (lambda i: s in i.get("weight_format", ""))
+
         return [
-            # GGUF / GGML
-            Rule("gguf-ctrans", 
-                 lambda i: i.get("weight_format") == "gguf" and 
-                           (i.get("model_type", "").lower() in CTRANS_SUPPORTED),
-                 backend="ctransformers", 
-                 score=200),
+            # 1️⃣   GGUF / GGML → llama‑cpp, the defacto runtime for these formats
+            Rule("gguf_or_ggml", fmt("gguf", "ggml"), "llama-cpp-python"),
 
-            Rule("gguf-llama-cpp",  
-                 lambda i: i.get("weight_format") == "gguf",
-                 backend="llama-cpp-python"),
+            # 2️⃣   GPTQ safetensors or .gptq → auto‑gptq
+            Rule("gptq", contains("gptq"), "auto-gptq"),
 
-            # GPTQ
-            Rule("gptq",           
-                 lambda i: i.get("weight_format", "").startswith("gptq"),
-                 backend="auto-gptq"),
+            # 3️⃣   AWQ
+            Rule("awq", fmt("awq"), "autoawq"),
 
-            # AWQ
-            Rule("awq",            
-                 lambda i: any(f.endswith(".awq") for f in i.get("available_weight_files", [])) or
-                           "awq" in i.get("weight_format", "").lower(),
-                 backend="autoawq"),
+            # 4️⃣   ExLlama 4‑bit safetensors
+            Rule("exllama", contains("exllama"), "exllama"),
 
-            # ExLlama
-            Rule("exllama",
-                 lambda i: (any("exllama" in f.lower() for f in i.get("available_weight_files", [])) or
-                           "exllama" in i.get("model_id", "").lower()) and
-                           i.get("weight_format") == "safetensors",
-                 backend="exllama"),
+            # 5️⃣   Marlin 4‑bit
+            Rule("marlin", fmt("marlin"), "marlin"),
 
-            # Marlin
-            Rule("marlin",
-                 lambda i: any(f.endswith(".marlin") for f in i.get("available_weight_files", [])) or
-                           "marlin" in i.get("model_id", "").lower(),
-                 backend="marlin"),
+            # 6️⃣   ONNX → onnxruntime / Optimum
+            Rule("onnx", fmt("onnx"), "onnxruntime"),
 
-            # MLC-LLM
-            Rule("mlc-llm",
-                 lambda i: any(f.endswith(".mlc") for f in i.get("available_weight_files", [])) or
-                           any("mlc-chat-config.json" in f.lower() for f in i.get("available_files", [])),
-                 backend="mlc_llm"),
-
-            # ONNX
-            Rule("onnx",           
-                 lambda i: i.get("weight_format") == "onnx",
-                 backend="onnxruntime"),
-
-            # vLLM para modelos grandes no cuantizados
-            Rule("vllm",
-                 lambda i: (i.get("modality") == "text" and 
-                           i.get("task") == "text-generation" and
-                           i.get("param_count_estimate", 0) > 10_000_000_000 and
-                           i.get("quant", "none") == "none"),
-                 backend="vllm"),
-
-            # Diffusers
-            Rule("diffusers",      
-                 lambda i: i.get("library") == "diffusers" or i.get("task") in DIFFUSERS_TASKS,
-                 backend="diffusers"),
-
-            # Transformers 8-bit para modelos grandes
-            Rule("transformers-8bit",
-                 lambda i: i.get("modality") == "text" and 
-                           i.get("task") == "text-generation" and
-                           i.get("param_count_estimate", 0) > 6_000_000_000,
-                 backend="transformers-8bit"),
-
-            # Fallback genérico
-            Rule("transformers",   
-                 lambda i: True,   # catch-all
-                 backend="transformers", 
-                 score=0),
+            # 7️⃣   Diffusion pipelines (weight format is often irrelevant)
+            Rule(
+                "diffusers",
+                lambda i: i.get("library") == "diffusers" or i.get("task") in DIFFUSERS_TASKS,
+                "diffusers",
+            ),
         ]

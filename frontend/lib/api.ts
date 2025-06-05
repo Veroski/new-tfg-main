@@ -1,6 +1,6 @@
 // api.ts o routes.ts actualizado
 
-export const API_BASE_URL = process.env.BACKEND_URL;
+export const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 export const filtrarModelos = (
   task: string,

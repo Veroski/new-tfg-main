@@ -300,6 +300,11 @@ tokenizer = ExLlamaTokenizer(model_path='{model_id}')
 generator = ExLlamaGenerator(model, tokenizer)
 print("✅ Modelo cargado correctamente")
 """
+        
+        # onnxruntime  ★ NUEVO ★
+        if backend == "onnxruntime":
+            return f"""import torch\nfrom transformers import AutoTokenizer\nfrom optimum.onnxruntime import ORTModelForCausalLM\n\n{device_snip}\n\nprint('Cargando modelo ONNXRuntime…')\ntokenizer = AutoTokenizer.from_pretrained('{model_id}', use_fast=True)\nmodel     = ORTModelForCausalLM.from_pretrained('{model_id}')\nmodel.to(device)\nprint('✅ Modelo cargado')\n"""
+
 
         if backend == "vllm":
             return f"""from vllm import LLM, SamplingParams
