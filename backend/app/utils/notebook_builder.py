@@ -176,20 +176,11 @@ class NotebookBuilder:
             processing_cell = self._get_result_processing_cell(task, modality)
             self.nb.cells.append(nbf.v4.new_code_cell(processing_cell))
     
-    def add_sample_eval(self) -> None:
-        """Añade la celda de evaluación de muestra."""
-        eval_cell = self._sample_eval_cell(
-            self.info.get('task', ''), 
-            self.info.get('model_id', '')
-        )
-        if eval_cell:  # Solo añadir si hay contenido
-            self.nb.cells.append(nbf.v4.new_code_cell(eval_cell))
-    
     def add_footer(self) -> None:
         """Añade la celda de pie de página."""
         self.nb.cells.append(
             nbf.v4.new_markdown_cell(
-                "---\n✅ *Notebook generado automáticamente. ¡Disfruta!* / *Happy hacking!*"
+                "---\n✅ *Notebook generado automáticamente. ¡Disfruta!*"
             )
         )
     
@@ -1147,28 +1138,6 @@ def generate(prompt: str, **gen_kwargs) -> str:
             )
         return ""
 
-    def _sample_eval_cell(self, task: str, model_id: str) -> str:
-        """Genera el contenido de la celda de evaluación de muestra."""
-        if task == "text-generation":
-            return dedent(
-                f"""
-                # Evaluación de muestra
-                sample_prompt = "¿Cuál es la capital de España?"
-                sample_output = generate(sample_prompt, max_new_tokens=50)
-                print(f"Prompt: {{sample_prompt}}\nOutput: {{sample_output}}")
-                """
-            )
-        elif task == "text-classification":
-            return dedent(
-                f"""
-                # Evaluación de muestra
-                sample_text = "Me encanta este producto, es fantástico."
-                sample_output = generate(sample_text)
-                print(f"Texto: {{sample_text}}\nClasificación: {{sample_output}}")
-                """
-            )
-        # Añadir más casos según sea necesario para otras tareas
-        return ""
 
 
 def create_notebook_builder(model_info: Dict[str, Any], user: dict = None) -> NotebookBuilder:
