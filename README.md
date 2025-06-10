@@ -368,11 +368,6 @@ Para contribuir a este proyecto, por favor, sigue las siguientes directrices:
 *   Escribe pruebas unitarias y de integración para tu código.
 *   Documenta cualquier cambio significativo en la funcionalidad.
 
----
-
-Documentación generada por Manus AI.
-
-
 
 
 ## 7. Rutas del Backend (API Endpoints)
