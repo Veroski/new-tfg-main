@@ -1050,63 +1050,61 @@ def generate(prompt: str, **gen_kwargs) -> str:
         else:
             from textwrap import dedent
 
-        return dedent("""
-            import ipywidgets as widgets
-            from IPython.display import display, clear_output
+            tokens = "max_new_tokens" if self.info.get('recommended_backend') == 'llama-cpp-python' else "max_tokens"
 
-            prompt_box = widgets.Textarea(
-                value="Escribe un poema sobre la luna.",
-                placeholder="Escribe tu prompt aquí...",
-                description="Prompt:",
-                layout=widgets.Layout(width='100%', height='120px')
-            )
+            return dedent(f"""
+                import ipywidgets as widgets
+                from IPython.display import display, clear_output
 
-            max_tokens_slider = widgets.IntSlider(
-                value=100,
-                min=10,
-                max=500,
-                step=10,
-                description="Max tokens:",
-                layout=widgets.Layout(width='300px')
-            )
+                prompt_box = widgets.Textarea(
+                    value="Escribe un poema sobre la luna.",
+                    placeholder="Escribe tu prompt aquí...",
+                    description="Prompt:",
+                    layout=widgets.Layout(width='100%', height='120px')
+                )
 
-            temperature_slider = widgets.FloatSlider(
-                value=0.7,
-                min=0.1,
-                max=2.0,
-                step=0.1,
-                description="Temperature:",
-                layout=widgets.Layout(width='300px')
-            )
+                max_tokens_slider = widgets.IntSlider(
+                    value=100,
+                    min=10,
+                    max=500,
+                    step=10,
+                    description="Max tokens:",
+                    layout=widgets.Layout(width='300px')
+                )
 
-            generate_button = widgets.Button(
-                description="Generar",
-                button_style='primary',
-                layout=widgets.Layout(width='200px')
-            )
+                temperature_slider = widgets.FloatSlider(
+                    value=0.7,
+                    min=0.1,
+                    max=2.0,
+                    step=0.1,
+                    description="Temperature:",
+                    layout=widgets.Layout(width='300px')
+                )
 
-            output = widgets.Output()
+                generate_button = widgets.Button(
+                    description="Generar",
+                    button_style='primary',
+                    layout=widgets.Layout(width='200px')
+                )
 
-            def on_generate_clicked(_):
-                with output:
-                    clear_output()
-                    print("Generando...")
+                output = widgets.Output()
 
-                    kwargs = {
-                        "prompt": prompt_box.value,
-                        "temperature": temperature_slider.value
-                    }
+                def on_generate_clicked(_):
+                    with output:
+                        clear_output()
+                        print("Generando...")
 
-                    if self.info.get('recommended_backend') == 'llama-cpp-python':
-                        kwargs["max_tokens"] = max_tokens_slider.value
-                    else:
-                        kwargs["max_new_tokens"] = max_tokens_slider.value
+                        kwargs = {{
+                            "prompt": prompt_box.value,
+                            "temperature": temperature_slider.value,
+                            "{tokens}": max_tokens_slider.value
+                        }}
 
-                    result = generate(**kwargs)
-                    print(f"Resultado: {result}")
+                        result = generate(**kwargs)
+                        print(f"Resultado: {{result}}")
 
-            generate_button.on_click(on_generate_clicked)
-            display(prompt_box, max_tokens_slider, temperature_slider, generate_button, output)
+                generate_button.on_click(on_generate_clicked)
+                display(prompt_box, max_tokens_slider, temperature_slider, generate_button, output)
             """)
 
 
