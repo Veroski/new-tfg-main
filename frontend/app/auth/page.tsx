@@ -57,40 +57,10 @@ export default function AuthPage() {
               <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 leading-tight">
                 Transforma tu flujo de trabajo con <span className="text-[#F97316]">ColabAutomation</span>
               </h1>
-              <p className="text-xl text-gray-600 leading-relaxed">
-                La plataforma todo-en-uno que revoluciona la manera en que tu equipo colabora y automatiza procesos
-                empresariales.
-              </p>
+              
             </div>
 
-            {/* Features */}
-            <div className="space-y-4">
-              {features.map((feature, index) => (
-                <div key={index} className="flex items-start space-x-3">
-                  <div className="flex-shrink-0 mt-1">{feature.icon}</div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">{feature.title}</h3>
-                    <p className="text-gray-600">{feature.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-6 pt-6 border-t border-gray-200">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-[#F97316]">85%</div>
-                <div className="text-sm text-gray-600">Tiempo Ahorrado</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-[#F97316]">300+</div>
-                <div className="text-sm text-gray-600">Procesos Automatizados</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-[#F97316]">3x</div>
-                <div className="text-sm text-gray-600">Más Productividad</div>
-              </div>
-            </div>
+            
           </div>
 
           {/* Right Column - Auth Card */}
