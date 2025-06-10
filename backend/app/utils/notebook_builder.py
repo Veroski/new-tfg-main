@@ -55,7 +55,6 @@ class NotebookBuilder:
         self.add_prompt_cell()
         self.add_inference_cell()
         self.add_result_processing_cell()
-        self.add_sample_eval()
         self.add_footer()
         return self.nb
     
@@ -1049,58 +1048,67 @@ def generate(prompt: str, **gen_kwargs) -> str:
                 """
             )
         else:
-            return dedent("""
-                import ipywidgets as widgets
-                from IPython.display import display, clear_output
+            from textwrap import dedent
 
-                prompt_box = widgets.Textarea(
-                    value="Escribe un poema sobre la luna.",
-                    placeholder="Escribe tu prompt aquí...",
-                    description="Prompt:",
-                    layout=widgets.Layout(width='100%', height='120px')
-                )
+        return dedent("""
+            import ipywidgets as widgets
+            from IPython.display import display, clear_output
 
-                max_tokens_slider = widgets.IntSlider(
-                    value=100,
-                    min=10,
-                    max=500,
-                    step=10,
-                    description="Max tokens:",
-                    layout=widgets.Layout(width='300px')
-                )
-
-                temperature_slider = widgets.FloatSlider(
-                    value=0.7,
-                    min=0.1,
-                    max=2.0,
-                    step=0.1,
-                    description="Temperature:",
-                    layout=widgets.Layout(width='300px')
-                )
-
-                generate_button = widgets.Button(
-                    description="Generar",
-                    button_style='primary',
-                    layout=widgets.Layout(width='200px')
-                )
-
-                output = widgets.Output()
-
-                def on_generate_clicked(_):
-                    with output:
-                        clear_output()
-                        print("Generando...")
-                        result = generate(
-                            prompt_box.value, 
-                            max_new_tokens=max_tokens_slider.value,
-                            temperature=temperature_slider.value
-                        )
-                        print(f"Resultado: {result}")
-
-                generate_button.on_click(on_generate_clicked)
-                display(prompt_box, max_tokens_slider, temperature_slider, generate_button, output)
-                """
+            prompt_box = widgets.Textarea(
+                value="Escribe un poema sobre la luna.",
+                placeholder="Escribe tu prompt aquí...",
+                description="Prompt:",
+                layout=widgets.Layout(width='100%', height='120px')
             )
+
+            max_tokens_slider = widgets.IntSlider(
+                value=100,
+                min=10,
+                max=500,
+                step=10,
+                description="Max tokens:",
+                layout=widgets.Layout(width='300px')
+            )
+
+            temperature_slider = widgets.FloatSlider(
+                value=0.7,
+                min=0.1,
+                max=2.0,
+                step=0.1,
+                description="Temperature:",
+                layout=widgets.Layout(width='300px')
+            )
+
+            generate_button = widgets.Button(
+                description="Generar",
+                button_style='primary',
+                layout=widgets.Layout(width='200px')
+            )
+
+            output = widgets.Output()
+
+            def on_generate_clicked(_):
+                with output:
+                    clear_output()
+                    print("Generando...")
+
+                    kwargs = {
+                        "prompt": prompt_box.value,
+                        "temperature": temperature_slider.value
+                    }
+
+                    if self.info.get('recommended_backend') == 'llama-cpp-python':
+                        kwargs["max_tokens"] = max_tokens_slider.value
+                    else:
+                        kwargs["max_new_tokens"] = max_tokens_slider.value
+
+                    result = generate(**kwargs)
+                    print(f"Resultado: {result}")
+
+            generate_button.on_click(on_generate_clicked)
+            display(prompt_box, max_tokens_slider, temperature_slider, generate_button, output)
+            """)
+
 
     def _get_inference_cell(self, task: str, modality: str) -> str:
         """Genera el contenido de la celda de inferencia."""
