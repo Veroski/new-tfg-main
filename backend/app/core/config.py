@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 
 class Settings(BaseSettings):
-    token: str
     client_id: str
     client_secret: str
     redirect_uri: str

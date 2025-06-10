@@ -25,7 +25,10 @@ app.add_middleware(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cambiar en producción
+    allow_origins=[
+        "http://localhost:3000",
+        "https://https://frontend-uwik.onrender.com/"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

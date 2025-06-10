@@ -44,3 +44,25 @@ def delete_user(db: Session, user_id: int):
     db.delete(user)
     db.commit()
     return user
+
+def get_user_hf_token(db: Session, user_id: int):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    return user.hf_token
+
+def update_user_hf_token(db: Session, user_id: int, hf_token: str):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    user.hf_token = hf_token
+    db.commit()
+    db.refresh(user)
+    return user
+
+def post_user_hf_token(db: Session, user_id: int, hf_token: str):
+    """
+    This function is used to set or update the Hugging Face token for a user.
+    It is a convenience function that combines the retrieval and update into one step.
+    """
+    return update_user_hf_token(db, user_id, hf_token)

@@ -89,7 +89,8 @@ def _task_group(task: str) -> str:
 # -------------------------------------------------------------------
 def process_model_info(model_info: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Procesa la información del modelo y determina el backend más adecuado.
+    Procesa la información del modelo y determina el backend más adecuado,
+    usando un archivo de pesos específico si se ha indicado.
     
     Args:
         model_info: Diccionario con información del modelo
@@ -99,10 +100,16 @@ def process_model_info(model_info: Dict[str, Any]) -> Dict[str, Any]:
     """
     # Extraer información relevante
     files = model_info.get("all_files", [])
-    weight_files = get_weight_files(files)
+    selected_file = model_info.get("selected_weight_file")  # <- NUEVO
+
+    if selected_file and selected_file in files:
+        weight_files = [selected_file]
+    else:
+        weight_files = get_weight_files(files)
+        selected_file = weight_files[0] if weight_files else None
     
     # Detectar formato y cuantización
-    weight_format = detect_format(weight_files)
+    weight_format = detect_format([selected_file]) if selected_file else "unknown"
     quant = is_quantized(weight_format)
     
     # Inferir modalidad
@@ -117,6 +124,7 @@ def process_model_info(model_info: Dict[str, Any]) -> Dict[str, Any]:
     # Enriquecer la información del modelo
     enriched_info = {
         **model_info,
+        "weight_file": selected_file,  # <- usado por el notebook
         "weight_format": weight_format,
         "quant": quant,
         "modality": modality,

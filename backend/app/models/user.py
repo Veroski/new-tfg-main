@@ -12,3 +12,4 @@ class User(Base):
     google_drive_token = Column(String, nullable=True)        # ← Refresh token
     google_drive_access_token = Column(String, nullable=True) # ← Access token
     google_drive_token_expiry = Column(DateTime, nullable=True)
+    hf_token = Column(String, nullable=True)  # ← Hugging Face token
