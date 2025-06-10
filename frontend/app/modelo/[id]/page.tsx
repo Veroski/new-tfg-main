@@ -80,7 +80,12 @@ export default function ModeloDetalle() {
       setLoading(true)
       setError(null)
 
-      const res = await fetch(obtenerDetallesModelo(modelId))
+      const res = await fetch(obtenerDetallesModelo(modelId),{
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("auth_token")}`,
+        },
+      })
       if (!res.ok) throw new Error(`Error ${res.status}`)
 
       const json = await res.json()

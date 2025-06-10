@@ -239,7 +239,7 @@ export default function PerfilPage() {
               <Sparkles className="h-5 w-5 text-orange-500" /> Token de Hugging Face
               {!hasExistingToken && !isLoadingToken && (
                 <span className="text-xs bg-orange-100 text-orange-600 px-2 py-1 rounded-full animate-bounce">
-                  ¡Recomendado!
+                  ¡Requerido para funcionar!
                 </span>
               )}
             </CardTitle>
