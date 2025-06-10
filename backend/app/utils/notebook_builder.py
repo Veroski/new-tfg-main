@@ -1,3 +1,6 @@
+
+
+
 from __future__ import annotations
 from datetime import datetime
 from textwrap import dedent
@@ -12,7 +15,7 @@ class NotebookBuilder:
     en métodos independientes que pueden ser sobrescritos en subclases.
     """
     
-    def __init__(self, info: Dict[str, Any]):
+    def __init__(self, info: Dict[str, Any], user: dict = None):
         """
         Inicializa el constructor de notebooks.
         
@@ -21,6 +24,7 @@ class NotebookBuilder:
         """
         self.nb = nbf.v4.new_notebook()
         self.info = info
+        self.user = user
     
     def build(self) -> nbf.NotebookNode:
         """
@@ -29,11 +33,24 @@ class NotebookBuilder:
         Returns:
             nbf.NotebookNode: Notebook generado
         """
+
         self.add_metadata()
+        self.add_hftoken()
         self.add_install()
         self.add_gpu_check()
         self.add_download_weights()
         self.add_readme_preview()
+        
+        # Eliminar la verificación de generate() con exec
+        # model_setup_code = self._model_setup_snippet(self.info)
+        # try:
+        #     tmp_globals = {}
+        #     exec(model_setup_code, tmp_globals)
+        #     assert 'generate' in tmp_globals and callable(tmp_globals['generate']), \
+        #         "El snippet debe definir una función generate() callable"
+        # except Exception as e:
+        #     print(f"Warning: Snippet verification failed: {e}")
+        
         self.add_model_setup()
         self.add_prompt_cell()
         self.add_inference_cell()
@@ -82,6 +99,23 @@ class NotebookBuilder:
             nbf.v4.new_code_cell(self._install_cell(install_cmds))
         )
     
+    def add_hftoken(self) -> None:
+        """Añade la celda para configurar el token de Hugging Face."""
+        print("USER: ", self.user)
+        hf_token = self.user.hf_token
+        if hf_token:
+            self.nb.cells.append(
+                nbf.v4.new_code_cell(
+                    dedent(
+                        f"""
+                        import os
+                        os.environ['HF_TOKEN'] = '{hf_token}'
+                        print('✅ Token de Hugging Face configurado')
+                        """
+                    )
+                )
+            )
+        
     def add_gpu_check(self) -> None:
         """Añade la celda de verificación de GPU."""
         self.nb.cells.append(
@@ -225,6 +259,27 @@ class NotebookBuilder:
         modality = info.get("modality", "")
 
         device_snip = "device = 'cuda' if torch.cuda.is_available() else 'cpu'"
+        
+        # Eliminar unified_generate_function
+        # unified_generate_function = """
+        # def generate(prompt: str, **gen_kwargs) -> str:
+        #     if 'pipe' in globals():            # transformers pipeline
+        #         out = pipe(prompt, **gen_kwargs)
+        #         return out[0].get('generated_text', str(out))
+
+        #     if 'llm' in globals():             # llama-cpp / ctransformers / exllama
+        #         out = llm(prompt, **gen_kwargs)
+        #         return out['choices'][0]['text'] if isinstance(out, dict) else str(out)
+
+        #     if 'model' in globals() and 'tokenizer' in globals():  # GPTQ, AWQ, ONNX, …
+        #         inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+        #         ids    = model.generate(**input, **gen_kwargs)
+        #         return tokenizer.decode(ids[0], skip_special_tokens=True)
+
+        #     raise RuntimeError('No backend inference object found')
+
+        # assert callable(generate), 'generate() debe definirse en el snippet'
+        # """
 
         # Ejemplos para diferentes backends
         if backend == "llama-cpp-python":
@@ -241,6 +296,10 @@ llm = Llama(
     n_gpu_layers=35 if torch.cuda.is_available() else 0
 )
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    out = llm(prompt, **gen_kwargs)
+    return out['choices'][0]['text'] if isinstance(out, dict) else str(out)
 """
 
         if backend == "ctransformers":
@@ -256,6 +315,10 @@ llm = AutoModelForCausalLM.from_pretrained(
     gpu_layers=35 if torch.cuda.is_available() else 0
 )
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    out = llm(prompt, **gen_kwargs)
+    return out['choices'][0]['text'] if isinstance(out, dict) else str(out)
 """
 
         if backend == "auto-gptq":
@@ -269,6 +332,11 @@ print("Cargando modelo GPTQ...")
 tokenizer = AutoTokenizer.from_pretrained('{model_id}', use_fast=True)
 model = AutoModelForCausalLM.from_pretrained('{model_id}', device_map='auto', trust_remote_code=True)
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+    ids    = model.generate(**inputs, **gen_kwargs)
+    return tokenizer.decode(ids[0], skip_special_tokens=True)
 """
 
         if backend == "autoawq":
@@ -283,6 +351,11 @@ print("Cargando modelo AWQ...")
 tokenizer = AutoTokenizer.from_pretrained('{model_id}', use_fast=True)
 model = AutoAWQForCausalLM.from_pretrained('{model_id}', device_map='auto')
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+    ids    = model.generate(**inputs, **gen_kwargs)
+    return tokenizer.decode(ids[0], skip_special_tokens=True)
 """
 
         if backend == "exllama":
@@ -299,12 +372,37 @@ model = ExLlamaModel(model_path='{model_id}')
 tokenizer = ExLlamaTokenizer(model_path='{model_id}')
 generator = ExLlamaGenerator(model, tokenizer)
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    # Caso especial para ExLlama que usa generator
+    max_tokens = gen_kwargs.get('max_new_tokens', 256)
+    generator.settings.token_repetition_penalty_max = gen_kwargs.get('repetition_penalty', 1.1)
+    generator.settings.temperature = gen_kwargs.get('temperature', 0.7)
+    generator.settings.top_p = gen_kwargs.get('top_p', 0.9)
+    generator.settings.top_k = gen_kwargs.get('top_k', 40)
+    
+    return generator.generate(prompt, max_new_tokens=max_tokens)
 """
         
-        # onnxruntime  ★ NUEVO ★
+        # onnxruntime  ★ NUEVO ★
         if backend == "onnxruntime":
-            return f"""import torch\nfrom transformers import AutoTokenizer\nfrom optimum.onnxruntime import ORTModelForCausalLM\n\n{device_snip}\n\nprint('Cargando modelo ONNXRuntime…')\ntokenizer = AutoTokenizer.from_pretrained('{model_id}', use_fast=True)\nmodel     = ORTModelForCausalLM.from_pretrained('{model_id}')\nmodel.to(device)\nprint('✅ Modelo cargado')\n"""
+            return f"""import torch
+from transformers import AutoTokenizer
+from optimum.onnxruntime import ORTModelForCausalLM
 
+{device_snip}
+
+print('Cargando modelo ONNXRuntime…')
+tokenizer = AutoTokenizer.from_pretrained('{model_id}', use_fast=True)
+model = ORTModelForCausalLM.from_pretrained('{model_id}')
+model.to(device)
+print('✅ Modelo cargado')
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+    ids    = model.generate(**inputs, **gen_kwargs)
+    return tokenizer.decode(ids[0], skip_special_tokens=True)
+"""
 
         if backend == "vllm":
             return f"""from vllm import LLM, SamplingParams
@@ -314,6 +412,17 @@ print("Cargando modelo con vLLM...")
 llm = LLM(model='{model_id}')
 sampling_params = SamplingParams(temperature=0.7, max_tokens=256)
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    # Caso especial para vLLM
+    params = SamplingParams(
+        temperature=gen_kwargs.get('temperature', 0.7),
+        max_tokens=gen_kwargs.get('max_new_tokens', 256),
+        top_p=gen_kwargs.get('top_p', 0.9),
+        top_k=gen_kwargs.get('top_k', 40)
+    )
+    outputs = llm.generate([prompt], params)
+    return outputs[0].outputs[0].text
 """
 
         if backend.startswith("transformers"):
@@ -325,6 +434,10 @@ print("✅ Modelo cargado correctamente")
 print("Cargando modelo para generación de texto...")
 pipe = pipeline('text-generation', model='{model_id}', device=0 if torch.cuda.is_available() else -1, trust_remote_code=True)
 print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    out = pipe(prompt, **gen_kwargs)
+    return out[0].get('generated_text', str(out))
 """
             if task == "text-classification":
                 return base + f"""
@@ -333,32 +446,261 @@ print("✅ Modelo cargado correctamente")
 print("Cargando modelo para clasificación de texto...")
 pipe = pipeline('text-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    out = pipe(text, **gen_kwargs)
+    return str(out)
+"""
+            if task == "token-classification":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para clasificación de tokens...")
+pipe = pipeline('token-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    out = pipe(text, **gen_kwargs)
+    return str(out)
+"""
+            if task == "question-answering":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para respuesta a preguntas...")
+pipe = pipeline('question-answering', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(question: str, context: str, **gen_kwargs) -> str:
+    out = pipe(question=question, context=context, **gen_kwargs)
+    return out['answer']
+"""
+            if task == "summarization":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para resumen...")
+pipe = pipeline('summarization', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    out = pipe(text, **gen_kwargs)
+    return out[0]['summary_text']
+"""
+            if task == "translation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para traducción...")
+pipe = pipeline('translation', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    out = pipe(text, **gen_kwargs)
+    return out[0]['translation_text']
+"""
+            if task == "image-to-text":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para imagen a texto...")
+pipe = pipeline('image-to-text', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return out[0]['generated_text']
+"""
+            if task == "text-to-image":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para texto a imagen...")
+pipe = pipeline('text-to-image', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    image = pipe(prompt, **gen_kwargs).images[0]
+    image_path = "generated_image.png"
+    image.save(image_path)
+    return image_path
+"""
+            if task == "audio-to-text":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para audio a texto...")
+pipe = pipeline('automatic-speech-recognition', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(audio_path: str, **gen_kwargs) -> str:
+    out = pipe(audio_path, **gen_kwargs)
+    return out['text']
+"""
+            if task == "text-to-audio":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para texto a audio...")
+pipe = pipeline('text-to-speech', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    audio = pipe(text, **gen_kwargs)
+    audio_path = "generated_audio.wav"
+    with open(audio_path, "wb") as f:
+        f.write(audio['audio'].numpy().tobytes())
+    return audio_path
+"""
+            if task == "fill-mask":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para rellenar máscara...")
+pipe = pipeline('fill-mask', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    out = pipe(text, **gen_kwargs)
+    return str(out)
+"""
+            if task == "zero-shot-classification":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para clasificación zero-shot...")
+pipe = pipeline('zero-shot-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, candidate_labels: List[str], **gen_kwargs) -> str:
+    out = pipe(text, candidate_labels=candidate_labels, **gen_kwargs)
+    return str(out)
+"""
+            if task == "feature-extraction":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para extracción de características...")
+pipe = pipeline('feature-extraction', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    out = pipe(text, **gen_kwargs)
+    return str(out)
 """
             if task == "image-classification":
                 return base + f"""
-from PIL import Image
 
 # Configuración del modelo
-print("Cargando modelo para clasificación de imágenes...")
+print("Cargando modelo para clasificación de imagen...")
 pipe = pipeline('image-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return str(out)
 """
-            if task == "automatic-speech-recognition":
+            if task == "object-detection":
                 return base + f"""
 
 # Configuración del modelo
-print("Cargando modelo para reconocimiento de voz...")
-pipe = pipeline('automatic-speech-recognition', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("Cargando modelo para detección de objetos...")
+pipe = pipeline('object-detection', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return str(out)
 """
-            if task == "image-to-text" or task == "image-captioning":
+            if task == "image-segmentation":
                 return base + f"""
-from PIL import Image
 
 # Configuración del modelo
-print("Cargando modelo para descripción de imágenes...")
-pipe = pipeline('{task}', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("Cargando modelo para segmentación de imagen...")
+pipe = pipeline('image-segmentation', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return str(out)
+"""
+            if task == "depth-estimation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para estimación de profundidad...")
+pipe = pipeline('depth-estimation', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return str(out)
+"""
+            if task == "image-feature-extraction":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para extracción de características de imagen...")
+pipe = pipeline('image-feature-extraction', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return str(out)
+"""
+            if task == "image-to-image":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para imagen a imagen...")
+pipe = pipeline('image-to-image', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs).images[0]
+    image_path = "generated_image.png"
+    out.save(image_path)
+    return image_path
+"""
+            if task == "text-to-video":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para texto a video...")
+pipe = pipeline('text-to-video', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    video_path = "generated_video.mp4"
+    video = pipe(prompt, **gen_kwargs).images[0] # Assuming it returns a PIL Image or similar that can be saved as video
+    video.save(video_path) # This might need a proper video saving library
+    return video_path
+"""
+            if task == "video-classification":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para clasificación de video...")
+pipe = pipeline('video-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(video_path: str, **gen_kwargs) -> str:
+    out = pipe(video_path, **gen_kwargs)
+    return str(out)
 """
             if task == "audio-classification":
                 return base + f"""
@@ -367,653 +709,478 @@ print("✅ Modelo cargado correctamente")
 print("Cargando modelo para clasificación de audio...")
 pipe = pipeline('audio-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(audio_path: str, **gen_kwargs) -> str:
+    out = pipe(audio_path, **gen_kwargs)
+    return str(out)
 """
-            if task == "text-to-audio":
+            if task == "automatic-speech-recognition":
                 return base + f"""
-import IPython.display as ipd
 
 # Configuración del modelo
-print("Cargando modelo para generación de audio...")
-pipe = pipeline('text-to-audio', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("Cargando modelo para reconocimiento automático de voz...")
+pipe = pipeline('automatic-speech-recognition', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(audio_path: str, **gen_kwargs) -> str:
+    out = pipe(audio_path, **gen_kwargs)
+    return out['text']
 """
-            if task == "video-classification":
+            if task == "speech-to-text":
                 return base + f"""
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
 
 # Configuración del modelo
-print("Cargando modelo para clasificación de video...")
-pipe = pipeline('video-classification', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("Cargando modelo para voz a texto...")
+pipe = pipeline('automatic-speech-recognition', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(audio_path: str, **gen_kwargs) -> str:
+    out = pipe(audio_path, **gen_kwargs)
+    return out['text']
 """
-            # genérico
-            return base + f"""
+            if task == "text-to-speech":
+                return base + f"""
 
 # Configuración del modelo
-print("Cargando modelo para la tarea '{task}'...")
-pipe = pipeline('{task}', model='{model_id}', device=0 if torch.cuda.is_available() else -1, trust_remote_code=True)
+print("Cargando modelo para texto a voz...")
+pipe = pipeline('text-to-speech', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    audio = pipe(text, **gen_kwargs)
+    audio_path = "generated_audio.wav"
+    with open(audio_path, "wb") as f:
+        f.write(audio['audio'].numpy().tobytes())
+    return audio_path
 """
-
-        if backend == "diffusers":
-            return f"""import torch
-from diffusers import StableDiffusionPipeline
-import matplotlib.pyplot as plt
-
-# Configurar el dispositivo
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(f"Usando dispositivo: {{device}}")
+            if task == "visual-question-answering":
+                return base + f"""
 
 # Configuración del modelo
-print("Cargando modelo de difusión...")
-pipe = StableDiffusionPipeline.from_pretrained('{model_id}', torch_dtype=torch.float16 if device == 'cuda' else torch.float32)
-pipe = pipe.to(device)
+print("Cargando modelo para respuesta a preguntas visuales...")
+pipe = pipeline('visual-question-answering', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
 print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, question: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image=image, question=question, **gen_kwargs)
+    return out[0]['answer']
+"""
+            if task == "document-question-answering":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para respuesta a preguntas de documentos...")
+pipe = pipeline('document-question-answering', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, question: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image=image, question=question, **gen_kwargs)
+    return out[0]['answer']
+"""
+            if task == "image-to-text-generation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para generación de texto a partir de imagen...")
+pipe = pipeline('image-to-text', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(image_path: str, **gen_kwargs) -> str:
+    from PIL import Image
+    image = Image.open(image_path)
+    out = pipe(image, **gen_kwargs)
+    return out[0]['generated_text']
+"""
+            if task == "text-to-image-generation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para generación de imagen a partir de texto...")
+pipe = pipeline('text-to-image', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    image = pipe(prompt, **gen_kwargs).images[0]
+    image_path = "generated_image.png"
+    image.save(image_path)
+    return image_path
+"""
+            if task == "text-to-audio-generation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para generación de audio a partir de texto...")
+pipe = pipeline('text-to-speech', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(text: str, **gen_kwargs) -> str:
+    audio = pipe(text, **gen_kwargs)
+    audio_path = "generated_audio.wav"
+    with open(audio_path, "wb") as f:
+        f.write(audio['audio'].numpy().tobytes())
+    return audio_path
+"""
+            if task == "audio-to-text-generation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para generación de texto a partir de audio...")
+pipe = pipeline('automatic-speech-recognition', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(audio_path: str, **gen_kwargs) -> str:
+    out = pipe(audio_path, **gen_kwargs)
+    return out['text']
+"""
+            if task == "text-to-video-generation":
+                return base + f"""
+
+# Configuración del modelo
+print("Cargando modelo para generación de video a partir de texto...")
+pipe = pipeline('text-to-video', model='{model_id}', device=0 if torch.cuda.is_available() else -1)
+print("✅ Modelo cargado correctamente")
+
+def generate(prompt: str, **gen_kwargs) -> str:
+    video_path = "generated_video.mp4"
+    video = pipe(prompt, **gen_kwargs).images[0] # Assuming it returns a PIL Image or similar that can be saved as video
+    video.save(video_path) # This might need a proper video saving library
+    return video_path
 """
 
-        # Fallback para otros backends
-        return f"""# Configuración del modelo para backend '{backend}' con modalidad '{modality}'
-
-import torch
-print("Dispositivo disponible:", 'cuda' if torch.cuda.is_available() else 'cpu')
-
-print("Modelo ID:", '{model_id}')
-print("Tarea:", '{task}')
-print("Modalidad:", '{modality}')
-print("Backend recomendado:", '{backend}')
-
-# Añade aquí tu código específico para este modelo
-"""
+        return "" # Default case if no backend matches
 
     def _get_prompt_cell(self, task: str, modality: str) -> str:
-        """Genera el contenido de la celda de prompt."""
-        if task == "text-generation":
+        """Genera el contenido de la celda del prompt con widgets interactivos."""
+        if task == "question-answering":
             return dedent("""
-            # Define tu prompt aquí
-            prompt = "Explica de manera sencilla qué es la inteligencia artificial y cómo está cambiando el mundo"
-            
-            # Puedes modificar este prompt sin necesidad de volver a cargar el modelo
-            print(f"Prompt: {prompt}")
-            """)
-        
-        elif task == "text-classification":
+                import ipywidgets as widgets
+                from IPython.display import display, clear_output
+
+                question_box = widgets.Textarea(
+                    value="¿Cuál es la capital de Francia?",
+                    placeholder="Escribe tu pregunta aquí...",
+                    description="Pregunta:",
+                    layout=widgets.Layout(width='100%', height='80px')
+                )
+
+                context_box = widgets.Textarea(
+                    value="París es la capital de Francia.",
+                    placeholder="Escribe el contexto aquí...",
+                    description="Contexto:",
+                    layout=widgets.Layout(width='100%', height='120px')
+                )
+
+                generate_button = widgets.Button(
+                    description="Generar Respuesta",
+                    button_style='primary',
+                    layout=widgets.Layout(width='200px')
+                )
+
+                output = widgets.Output()
+
+                def on_generate_clicked(_):
+                    with output:
+                        clear_output()
+                        print("Generando respuesta...")
+                        result = generate(question=question_box.value, context=context_box.value)
+                        print(f"Respuesta: {result}")
+
+                generate_button.on_click(on_generate_clicked)
+                display(question_box, context_box, generate_button, output)
+                """
+            )
+        elif task == "zero-shot-classification":
             return dedent("""
-            # Define los textos a clasificar aquí
-            texts = [
-                'I love this product! It exceeded all my expectations and I would definitely buy it again.',
-                'This movie was terrible. The plot made no sense and the acting was awful.',
-                'The restaurant was okay. Food was good but the service was slow.',
-                'I am absolutely thrilled with my purchase! Best decision ever!'
-            ]
-            
-            # Puedes modificar estos textos sin necesidad de volver a cargar el modelo
-            print(f"Textos a clasificar: {len(texts)}")
-            """)
-        
-        elif task == "image-classification":
+                import ipywidgets as widgets
+                from IPython.display import display, clear_output
+
+                text_box = widgets.Textarea(
+                    value="Este es un texto sobre política.",
+                    placeholder="Escribe el texto a clasificar...",
+                    description="Texto:",
+                    layout=widgets.Layout(width='100%', height='80px')
+                )
+
+                labels_box = widgets.Textarea(
+                    value="política, finanzas, deportes",
+                    placeholder="Etiquetas separadas por comas...",
+                    description="Etiquetas:",
+                    layout=widgets.Layout(width='100%', height='60px')
+                )
+
+                generate_button = widgets.Button(
+                    description="Clasificar",
+                    button_style='primary',
+                    layout=widgets.Layout(width='200px')
+                )
+
+                output = widgets.Output()
+
+                def on_generate_clicked(_):
+                    with output:
+                        clear_output()
+                        print("Clasificando texto...")
+                        candidate_labels = [label.strip() for label in labels_box.value.split(',')]
+                        result = generate(text=text_box.value, candidate_labels=candidate_labels)
+                        print(f"Clasificación: {result}")
+
+                generate_button.on_click(on_generate_clicked)
+                display(text_box, labels_box, generate_button, output)
+                """
+            )
+        elif task in ["image-to-text", "image-classification", "object-detection", "image-segmentation", "depth-estimation", "image-feature-extraction", "image-to-image", "visual-question-answering", "document-question-answering", "image-to-text-generation", "text-to-image-generation", "text-to-video-generation"]:
+            if task in ["visual-question-answering", "document-question-answering"]:
+                return dedent("""
+                    import ipywidgets as widgets
+                    from IPython.display import display, clear_output
+
+                    image_upload = widgets.FileUpload(
+                        accept='image/*',
+                        multiple=False,
+                        description="Subir imagen"
+                    )
+
+                    question_box = widgets.Textarea(
+                        value="¿Qué hay en la imagen?",
+                        placeholder="Escribe tu pregunta sobre la imagen...",
+                        description="Pregunta:",
+                        layout=widgets.Layout(width='100%', height='80px')
+                    )
+
+                    generate_button = widgets.Button(
+                        description="Analizar Imagen",
+                        button_style='primary',
+                        layout=widgets.Layout(width='200px')
+                    )
+
+                    output = widgets.Output()
+
+                    def on_generate_clicked(_):
+                        with output:
+                            clear_output()
+                            if image_upload.value:
+                                print("Analizando imagen...")
+                                # Guardar la imagen subida
+                                uploaded_file = list(image_upload.value.values())[0]
+                                image_path = uploaded_file['metadata']['name']
+                                with open(image_path, 'wb') as f:
+                                    f.write(uploaded_file['content'])
+                                
+                                result = generate(image_path=image_path, question=question_box.value)
+                                print(f"Respuesta: {result}")
+                            else:
+                                print("Por favor, sube una imagen primero.")
+
+                    generate_button.on_click(on_generate_clicked)
+                    display(image_upload, question_box, generate_button, output)
+                    """
+                )
+            else:
+                return dedent("""
+                    import ipywidgets as widgets
+                    from IPython.display import display, clear_output
+
+                    image_upload = widgets.FileUpload(
+                        accept='image/*',
+                        multiple=False,
+                        description="Subir imagen"
+                    )
+
+                    generate_button = widgets.Button(
+                        description="Procesar Imagen",
+                        button_style='primary',
+                        layout=widgets.Layout(width='200px')
+                    )
+
+                    output = widgets.Output()
+
+                    def on_generate_clicked(_):
+                        with output:
+                            clear_output()
+                            if image_upload.value:
+                                print("Procesando imagen...")
+                                # Guardar la imagen subida
+                                uploaded_file = list(image_upload.value.values())[0]
+                                image_path = uploaded_file['metadata']['name']
+                                with open(image_path, 'wb') as f:
+                                    f.write(uploaded_file['content'])
+                                
+                                result = generate(image_path=image_path)
+                                print(f"Resultado: {result}")
+                            else:
+                                print("Por favor, sube una imagen primero.")
+
+                    generate_button.on_click(on_generate_clicked)
+                    display(image_upload, generate_button, output)
+                    """
+                )
+        elif task in ["audio-to-text", "audio-classification", "automatic-speech-recognition", "speech-to-text", "text-to-audio-generation", "audio-to-text-generation"]:
             return dedent("""
-            # Define las URLs de las imágenes a clasificar
-            image_urls = [
-                'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg',
-                'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/mountain.jpg'
-            ]
-            
-            # Carga las imágenes
-            from PIL import Image
-            from io import BytesIO
-            import requests
-            
-            images = []
-            for url in image_urls:
-                print(f"Cargando imagen desde {url}")
-                img = Image.open(BytesIO(requests.get(url).content))
-                images.append(img)
-                
-            print(f"Imágenes cargadas: {len(images)}")
-            """)
-        
-        elif task == "automatic-speech-recognition":
+                import ipywidgets as widgets
+                from IPython.display import display, clear_output
+
+                audio_upload = widgets.FileUpload(
+                    accept='audio/*',
+                    multiple=False,
+                    description="Subir audio"
+                )
+
+                generate_button = widgets.Button(
+                    description="Procesar Audio",
+                    button_style='primary',
+                    layout=widgets.Layout(width='200px')
+                )
+
+                output = widgets.Output()
+
+                def on_generate_clicked(_):
+                    with output:
+                        clear_output()
+                        if audio_upload.value:
+                            print("Procesando audio...")
+                            # Guardar el archivo de audio subido
+                            uploaded_file = list(audio_upload.value.values())[0]
+                            audio_path = uploaded_file['metadata']['name']
+                            with open(audio_path, 'wb') as f:
+                                f.write(uploaded_file['content'])
+                            
+                            result = generate(audio_path=audio_path)
+                            print(f"Resultado: {result}")
+                        else:
+                            print("Por favor, sube un archivo de audio primero.")
+
+                generate_button.on_click(on_generate_clicked)
+                display(audio_upload, generate_button, output)
+                """
+            )
+        else:
             return dedent("""
-            # Define las URLs de los audios a transcribir
-            audio_urls = [
-                'https://huggingface.co/datasets/Narsil/audio_dummy/resolve/main/1.flac',
-                'https://huggingface.co/datasets/mozilla-foundation/common_voice_11_0/resolve/main/es/clips/common_voice_es_19362189.mp3'
-            ]
-            
-            # Puedes modificar estas URLs sin necesidad de volver a cargar el modelo
-            print(f"URLs de audio a transcribir: {len(audio_urls)}")
-            """)
-        
-        elif task == "image-to-text" or task == "image-captioning":
-            return dedent("""
-            # Define las URLs de las imágenes a describir
-            image_urls = [
-                'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg',
-                'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/mountain.jpg'
-            ]
-            
-            # Carga las imágenes
-            from PIL import Image
-            from io import BytesIO
-            import requests
-            
-            images = []
-            for url in image_urls:
-                print(f"Cargando imagen desde {url}")
-                img = Image.open(BytesIO(requests.get(url).content))
-                images.append(img)
-                
-            print(f"Imágenes cargadas: {len(images)}")
-            """)
-        
-        elif task == "text-to-image":
-            return dedent("""
-            # Define los prompts para generar imágenes
-            image_prompts = [
-                "a photograph of an orange cat sitting on a windowsill, looking outside, high quality, detailed",
-                "a beautiful mountain landscape with a lake at sunset, photorealistic, high resolution"
-            ]
-            
-            # Puedes modificar estos prompts sin necesidad de volver a cargar el modelo
-            print(f"Prompts para generar imágenes: {len(image_prompts)}")
-            """)
-        
-        elif task == "audio-classification":
-            return dedent("""
-            # Define las URLs de los audios a clasificar
-            audio_urls = [
-                'https://huggingface.co/datasets/Narsil/audio_dummy/resolve/main/1.flac',
-                'https://huggingface.co/datasets/sanchit-gandhi/librispeech_asr_dummy/resolve/main/1.flac'
-            ]
-            
-            # Puedes modificar estas URLs sin necesidad de volver a cargar el modelo
-            print(f"URLs de audio a clasificar: {len(audio_urls)}")
-            """)
-        
-        elif task == "text-to-audio":
-            return dedent("""
-            # Define los prompts para generar audio
-            audio_prompts = [
-                "Una voz femenina diciendo: Bienvenidos a este tutorial de inteligencia artificial",
-                "A male voice saying: Artificial intelligence is transforming the world"
-            ]
-            
-            # Puedes modificar estos prompts sin necesidad de volver a cargar el modelo
-            print(f"Prompts para generar audio: {len(audio_prompts)}")
-            """)
-        
-        elif task == "video-classification":
-            return dedent("""
-            # Función para obtener frames de ejemplo (simulando un video)
-            def get_sample_frames(num_frames=8):
-                # URLs de ejemplo (podríamos usar frames reales de un video)
-                urls = [
-                    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg',
-                    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/mountain.jpg'
-                ]
-                
-                import requests
-                from PIL import Image
-                from io import BytesIO
-                import numpy as np
-                
-                frames = []
-                for i in range(num_frames):
-                    url = urls[i % len(urls)]
-                    img = Image.open(BytesIO(requests.get(url).content)).resize((224, 224))
-                    frames.append(np.array(img))
-                
-                return frames
-            
-            # Obtener frames de muestra
-            print("Obteniendo frames de muestra para clasificación de video...")
-            frames = get_sample_frames()
-            print(f"Frames obtenidos: {len(frames)}")
-            """)
-        
-        # Genérico para otros casos
-        return dedent("""
-        # Define tu input aquí según el tipo de modelo
-        input_data = "Ejemplo de entrada para el modelo"
-        
-        # Puedes modificar este input sin necesidad de volver a cargar el modelo
-        print(f"Input: {input_data}")
-        """)
+                import ipywidgets as widgets
+                from IPython.display import display, clear_output
+
+                prompt_box = widgets.Textarea(
+                    value="Escribe un poema sobre la luna.",
+                    placeholder="Escribe tu prompt aquí...",
+                    description="Prompt:",
+                    layout=widgets.Layout(width='100%', height='120px')
+                )
+
+                max_tokens_slider = widgets.IntSlider(
+                    value=100,
+                    min=10,
+                    max=500,
+                    step=10,
+                    description="Max tokens:",
+                    layout=widgets.Layout(width='300px')
+                )
+
+                temperature_slider = widgets.FloatSlider(
+                    value=0.7,
+                    min=0.1,
+                    max=2.0,
+                    step=0.1,
+                    description="Temperature:",
+                    layout=widgets.Layout(width='300px')
+                )
+
+                generate_button = widgets.Button(
+                    description="Generar",
+                    button_style='primary',
+                    layout=widgets.Layout(width='200px')
+                )
+
+                output = widgets.Output()
+
+                def on_generate_clicked(_):
+                    with output:
+                        clear_output()
+                        print("Generando...")
+                        result = generate(
+                            prompt_box.value, 
+                            max_new_tokens=max_tokens_slider.value,
+                            temperature=temperature_slider.value
+                        )
+                        print(f"Resultado: {result}")
+
+                generate_button.on_click(on_generate_clicked)
+                display(prompt_box, max_tokens_slider, temperature_slider, generate_button, output)
+                """
+            )
 
     def _get_inference_cell(self, task: str, modality: str) -> str:
         """Genera el contenido de la celda de inferencia."""
-        if task == "text-generation":
-            return dedent("""
-            # Ejecutar inferencia con el prompt
-            try:
-                # Diferentes backends pueden requerir diferentes formas de llamada
-                try:
-                    # Para transformers pipeline
-                    result = pipe(prompt, max_new_tokens=256)
-                    if isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
-                        generated_text = result[0]['generated_text']
-                    else:
-                        generated_text = str(result)
-                except:
-                    # Para otros backends (llama-cpp, ctransformers, etc.)
-                    try:
-                        # Intento para llama-cpp
-                        result = llm(prompt, max_tokens=256)
-                        generated_text = result["choices"][0]["text"]
-                    except:
-                        # Intento para otros backends
-                        generated_text = llm(prompt, max_new_tokens=256)
-                
-                print("\\nResultado de la generación:")
-                print("-" * 50)
-                print(generated_text)
-                print("-" * 50)
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-                print("Intenta ajustar el código según el backend específico del modelo.")
-            """)
-        
-        elif task == "text-classification":
-            return dedent("""
-            # Ejecutar inferencia con los textos
-            try:
-                results = []
-                for i, text in enumerate(texts):
-                    result = pipe(text)
-                    results.append(result)
-                    print(f"\\nTexto {i+1}: '{text}'")
-                    print(f"Clasificación: {result[0]['label']} (Score: {result[0]['score']:.4f})")
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "image-classification":
-            return dedent("""
-            # Ejecutar inferencia con las imágenes
-            try:
-                for i, img in enumerate(images):
-                    result = pipe(img)
-                    print(f"\\nResultados para imagen {i+1}:")
-                    for j, res in enumerate(result[:5]):  # Mostrar los 5 primeros resultados
-                        print(f"  {j+1}. {res['label']} ({res['score']:.4f})")
-                    
-                    # Mostrar la imagen
-                    import matplotlib.pyplot as plt
-                    plt.figure(figsize=(6, 6))
-                    plt.imshow(img)
-                    plt.title(f"Imagen {i+1}: {result[0]['label']}")
-                    plt.axis('off')
-                    plt.show()
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "automatic-speech-recognition":
-            return dedent("""
-            # Ejecutar inferencia con los audios
-            try:
-                results = []
-                for i, url in enumerate(audio_urls):
-                    print(f"\\nTranscribiendo audio {i+1}...")
-                    result = pipe(url)
-                    results.append(result)
-                    print(f"Transcripción: {result['text']}")
-                    
-                    # Reproducir el audio
-                    import IPython.display as ipd
-                    print(f"Reproduciendo audio {i+1}:")
-                    ipd.display(ipd.Audio(url))
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "image-to-text" or task == "image-captioning":
-            return dedent("""
-            # Ejecutar inferencia con las imágenes
-            try:
-                results = []
-                for i, img in enumerate(images):
-                    result = pipe(img)
-                    results.append(result)
-                    caption = result[0]['generated_text']
-                    print(f"\\nDescripción para imagen {i+1}: {caption}")
-                    
-                    # Mostrar la imagen con su descripción
-                    import matplotlib.pyplot as plt
-                    plt.figure(figsize=(8, 8))
-                    plt.imshow(img)
-                    plt.title(caption)
-                    plt.axis('off')
-                    plt.show()
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "text-to-image":
-            return dedent("""
-            # Ejecutar inferencia con los prompts
-            try:
-                generated_images = []
-                for i, prompt in enumerate(image_prompts):
-                    print(f"\\nGenerando imagen {i+1} con prompt: '{prompt}'")
-                    result = pipe(prompt)
-                    image = result.images[0]
-                    generated_images.append(image)
-                    
-                    # Mostrar la imagen generada
-                    display(image)
-                    
-                    # Guardar la imagen
-                    filename = f"generated_image_{i+1}.png"
-                    image.save(filename)
-                    print(f"Imagen guardada como '{filename}'")
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "audio-classification":
-            return dedent("""
-            # Ejecutar inferencia con los audios
-            try:
-                results = []
-                for i, url in enumerate(audio_urls):
-                    print(f"\\nClasificando audio {i+1}...")
-                    result = pipe(url)
-                    results.append(result)
-                    print("Resultados:")
-                    for j, res in enumerate(result[:5]):  # Mostrar los 5 primeros resultados
-                        print(f"  {j+1}. {res['label']} ({res['score']:.4f})")
-                    
-                    # Reproducir el audio
-                    import IPython.display as ipd
-                    print(f"Reproduciendo audio {i+1}:")
-                    ipd.display(ipd.Audio(url))
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "text-to-audio":
-            return dedent("""
-            # Ejecutar inferencia con los prompts
-            try:
-                results = []
-                for i, prompt in enumerate(audio_prompts):
-                    print(f"\\nGenerando audio {i+1} con prompt: '{prompt}'")
-                    result = pipe(prompt)
-                    results.append(result)
-                    
-                    # Extraer información del audio
-                    sampling_rate = result.get("sampling_rate", 16000)
-                    audio_array = result.get("audio", result.get("audio_array", None))
-                    
-                    if audio_array is not None:
-                        # Reproducir el audio generado
-                        import IPython.display as ipd
-                        print(f"Reproduciendo audio generado {i+1}:")
-                        ipd.display(ipd.Audio(audio_array, rate=sampling_rate))
-                    else:
-                        print("No se pudo obtener el array de audio del resultado")
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        elif task == "video-classification":
-            return dedent("""
-            # Ejecutar inferencia con los frames
-            try:
-                # Mostrar algunos frames
-                import matplotlib.pyplot as plt
-                fig, axes = plt.subplots(1, 4, figsize=(15, 5))
-                for i, ax in enumerate(axes):
-                    ax.imshow(frames[i])
-                    ax.set_title(f"Frame {i+1}")
-                    ax.axis('off')
-                plt.tight_layout()
-                plt.show()
-                
-                # Clasificar el "video"
-                print("\\nClasificando video...")
-                result = pipe(frames)
-                print("Resultados:")
-                for i, res in enumerate(result[:5]):  # Mostrar los 5 primeros resultados
-                    print(f"  {i+1}. {res['label']} ({res['score']:.4f})")
-            except Exception as e:
-                print(f"Error durante la inferencia: {e}")
-            """)
-        
-        # Genérico para otros casos
+        # Ya no necesitamos esta celda porque la inferencia se maneja en los widgets
         return dedent("""
-        # Ejecutar inferencia con el input
-        try:
-            result = pipe(input_data)
-            print("\\nResultado de la inferencia:")
-            print(result)
-        except Exception as e:
-            print(f"Error durante la inferencia: {e}")
-            print("Intenta ajustar el código según el tipo específico de modelo.")
-        """)
+            # La inferencia se maneja directamente en los widgets interactivos de la celda anterior.
+            # Esta celda se mantiene por compatibilidad pero no es necesaria.
+            print("✅ Widgets interactivos configurados. Usa los controles de arriba para generar contenido.")
+            """
+        )
 
     def _needs_result_processing(self, task: str, modality: str) -> bool:
         """Determina si se necesita una celda de procesamiento de resultados."""
-        # Tareas que generan resultados que se pueden guardar
-        save_result_tasks = [
-            "text-to-audio", "audio-to-audio", "text-to-image", 
-            "image-to-image", "text-to-video", "automatic-speech-recognition"
-        ]
-        
-        return task in save_result_tasks or modality in ["audio", "video"]
+        return task in ["text-to-image", "text-to-audio", "text-to-video", "image-to-image", "text-to-image-generation", "text-to-audio-generation", "text-to-video-generation"]
 
     def _get_result_processing_cell(self, task: str, modality: str) -> str:
         """Genera el contenido de la celda de procesamiento de resultados."""
-        if task == "text-to-audio" or task == "audio-to-audio" or modality == "audio":
+        if task in ["text-to-image", "image-to-image", "text-to-image-generation"]:
             return dedent("""
-            # Procesar y guardar el resultado de audio
-            import numpy as np
-            from scipy.io.wavfile import write
-            import IPython.display as ipd
-
-            # Seleccionar el resultado a guardar (por defecto el primero)
-            result_index = 0  # Cambia esto si quieres guardar otro resultado
-            
-            if len(results) > result_index:
-                result = results[result_index]
-                
-                # Validar sample rate
-                sampling_rate = int(result.get("sampling_rate", 16000))
-                if not (0 <= sampling_rate <= 65535):
-                    print(f"Advertencia: Sampling rate fuera de rango: {sampling_rate}, usando 16000 por defecto")
-                    sampling_rate = 16000
-                
-                # Validar y normalizar audio
-                audio_data = result.get("audio", result.get("audio_array", None))
-                if audio_data is not None:
-                    if not isinstance(audio_data, np.ndarray):
-                        audio_data = np.array(audio_data)
-                    
-                    # Asegurar que sea 1D y de tipo float
-                    if audio_data.ndim > 1:
-                        audio_data = audio_data.squeeze()
-                    
-                    if np.issubdtype(audio_data.dtype, np.floating):
-                        # Escalar a int16
-                        max_val = np.max(np.abs(audio_data))
-                        if max_val > 0:
-                            audio_data = audio_data / max_val  # normaliza a [-1, 1]
-                        audio_data = (audio_data * 32767).astype(np.int16)
-                    
-                    # Guardar el audio
-                    output_filename = "output_audio.wav"
-                    write(output_filename, rate=sampling_rate, data=audio_data)
-                    print(f"✅ Audio guardado como '{output_filename}'")
-                    
-                    # Reproducir el audio guardado
-                    print("Reproduciendo audio guardado:")
-                    ipd.display(ipd.Audio(output_filename))
-                else:
-                    print("No se pudo obtener datos de audio del resultado")
-            else:
-                print("No hay resultados disponibles para guardar")
-            """)
-        
-        elif task == "text-to-image" or task == "image-to-image":
+                from IPython.display import Image
+                Image(filename=result)
+                """
+            )
+        elif task in ["text-to-audio", "text-to-audio-generation"]:
             return dedent("""
-            # Procesar y guardar el resultado de imagen
-            
-            # Seleccionar la imagen a guardar (por defecto la primera)
-            image_index = 0  # Cambia esto si quieres guardar otra imagen
-            
-            if len(generated_images) > image_index:
-                image = generated_images[image_index]
-                
-                # Guardar la imagen en alta resolución
-                output_filename = "output_image_hires.png"
-                image.save(output_filename)
-                print(f"✅ Imagen guardada en alta resolución como '{output_filename}'")
-                
-                # Mostrar la imagen guardada
-                import matplotlib.pyplot as plt
-                plt.figure(figsize=(10, 10))
-                plt.imshow(image)
-                plt.axis('off')
-                plt.title("Imagen guardada")
-                plt.show()
-            else:
-                print("No hay imágenes disponibles para guardar")
-            """)
-        
-        elif task == "text-to-video" or modality == "video":
+                from IPython.display import Audio
+                Audio(result)
+                """
+            )
+        elif task in ["text-to-video", "text-to-video-generation"]:
             return dedent("""
-            # Procesar y guardar el resultado de video
-            
-            # Nota: Este código asume que el resultado es una lista de frames o un objeto con atributo 'frames'
-            try:
-                # Intentar obtener los frames del resultado
-                if hasattr(result, 'frames'):
-                    frames = result.frames
-                elif isinstance(result, list) and len(result) > 0 and hasattr(result[0], 'frames'):
-                    frames = result[0].frames
-                elif isinstance(result, list) and all(isinstance(f, np.ndarray) for f in result):
-                    frames = result
-                else:
-                    frames = None
-                    print("No se pudieron identificar los frames en el resultado")
-                
-                if frames is not None and len(frames) > 0:
-                    # Guardar como video
-                    try:
-                        from diffusers.utils import export_to_video
-                        output_filename = "output_video.mp4"
-                        export_to_video(frames, output_filename)
-                        print(f"✅ Video guardado como '{output_filename}'")
-                        
-                        # Mostrar el video
-                        import IPython.display as ipd
-                        ipd.display(ipd.Video(output_filename, width=350))
-                    except Exception as e:
-                        print(f"Error al guardar el video: {e}")
-                        
-                        # Alternativa: guardar frames individuales
-                        print("Guardando frames individuales...")
-                        import matplotlib.pyplot as plt
-                        for i, frame in enumerate(frames[:10]):  # Guardar solo los primeros 10 frames
-                            frame_filename = f"output_frame_{i:03d}.png"
-                            plt.imsave(frame_filename, frame)
-                        print(f"✅ {min(10, len(frames))} frames guardados como archivos PNG")
-            except Exception as e:
-                print(f"Error al procesar el resultado de video: {e}")
-            """)
-        
-        elif task == "automatic-speech-recognition":
-            return dedent("""
-            # Procesar y guardar el resultado de transcripción
-            
-            # Seleccionar el resultado a guardar (por defecto el primero)
-            result_index = 0  # Cambia esto si quieres guardar otro resultado
-            
-            if len(results) > result_index:
-                result = results[result_index]
-                
-                # Extraer el texto transcrito
-                if isinstance(result, dict) and 'text' in result:
-                    transcription = result['text']
-                else:
-                    transcription = str(result)
-                
-                # Guardar la transcripción en un archivo
-                output_filename = "transcription.txt"
-                with open(output_filename, 'w', encoding='utf-8') as f:
-                    f.write(transcription)
-                print(f"✅ Transcripción guardada como '{output_filename}'")
-                
-                # Mostrar la transcripción
-                print("\\nTranscripción guardada:")
-                print("-" * 50)
-                print(transcription)
-                print("-" * 50)
-            else:
-                print("No hay resultados disponibles para guardar")
-            """)
-        
-        # Genérico para otros casos
-        return dedent("""
-        # Procesar y guardar el resultado
-        
-        try:
-            # Guardar el resultado en un archivo de texto
-            output_filename = "output_result.txt"
-            with open(output_filename, 'w', encoding='utf-8') as f:
-                f.write(str(result))
-            print(f"✅ Resultado guardado como '{output_filename}'")
-            
-            # Mostrar un resumen del resultado
-            print("\\nResumen del resultado guardado:")
-            print("-" * 50)
-            result_str = str(result)
-            print(result_str[:500] + "..." if len(result_str) > 500 else result_str)
-            print("-" * 50)
-        except Exception as e:
-            print(f"Error al guardar el resultado: {e}")
-        """)
+                from IPython.display import Video
+                Video(result)
+                """
+            )
+        return ""
 
     def _sample_eval_cell(self, task: str, model_id: str) -> str:
         """Genera el contenido de la celda de evaluación de muestra."""
-        # Ya no necesitamos esta celda porque hemos separado la funcionalidad
-        # en celdas más específicas (prompt, inferencia, procesamiento)
+        if task == "text-generation":
+            return dedent(
+                f"""
+                # Evaluación de muestra
+                sample_prompt = "¿Cuál es la capital de España?"
+                sample_output = generate(sample_prompt, max_new_tokens=50)
+                print(f"Prompt: {{sample_prompt}}\nOutput: {{sample_output}}")
+                """
+            )
+        elif task == "text-classification":
+            return dedent(
+                f"""
+                # Evaluación de muestra
+                sample_text = "Me encanta este producto, es fantástico."
+                sample_output = generate(sample_text)
+                print(f"Texto: {{sample_text}}\nClasificación: {{sample_output}}")
+                """
+            )
+        # Añadir más casos según sea necesario para otras tareas
         return ""
 
 
-class TextNotebookBuilder(NotebookBuilder):
-    """Especialización para modelos de texto."""
-    pass
-
-
-class VisionNotebookBuilder(NotebookBuilder):
-    """Especialización para modelos de visión."""
-    pass
-
-
-class AudioNotebookBuilder(NotebookBuilder):
-    """Especialización para modelos de audio."""
-    pass
-
-
-def create_notebook_builder(info: Dict[str, Any]) -> NotebookBuilder:
+def create_notebook_builder(model_info: Dict[str, Any], user: dict = None) -> NotebookBuilder:
     """
-    Factory para crear el constructor de notebooks adecuado según la modalidad.
+    Crea un constructor de notebooks adecuado para el modelo especificado.
     
     Args:
-        info: Diccionario con información del modelo
+        model_info: Información del modelo
         
     Returns:
-        NotebookBuilder: Constructor de notebooks especializado
+        NotebookBuilder: Constructor de notebooks
     """
-    modality = info.get('modality', 'text')
-    
-    if modality == 'vision':
-        return VisionNotebookBuilder(info)
-    elif modality == 'audio':
-        return AudioNotebookBuilder(info)
-    else:
-        return TextNotebookBuilder(info)
+    # Por ahora, simplemente devolvemos una instancia de NotebookBuilder
+    # En el futuro, podríamos crear subclases específicas para diferentes tipos de modelos
+    return NotebookBuilder(model_info, user=user)

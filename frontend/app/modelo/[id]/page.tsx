@@ -16,7 +16,6 @@ import {
   generarNotebook,
   crearYSubirNotebook,
   verificarAutenticacion,
-  iniciarLogin,
 } from "@/lib/api"
 import ReactMarkdown from "react-markdown"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
@@ -58,6 +57,7 @@ export default function ModeloDetalle() {
   const [authChecking, setAuthChecking] = useState<boolean>(true)
   const [colabLink, setColabLink] = useState<string | null>(null)
   const [creatingColab, setCreatingColab] = useState<boolean>(false)
+  const [archivoSeleccionado, setArchivoSeleccionado] = useState<string | null>(null)
 
   /* -------- Verificar autenticación del usuario -------- */
   const checkAuth = useCallback(async () => {
@@ -172,8 +172,9 @@ export default function ModeloDetalle() {
   /* -------- Acción: generar notebook -------- */
   const handleGenerateNotebook = async () => {
     try {
-      // Redirigir al usuario directamente a la URL de descarga del notebook
-      window.open(generarNotebook(modelId), "_blank")
+      const url = await generarNotebook(modelId)
+      const urlConArchivo = archivoSeleccionado ? `${url}?archivo=${encodeURIComponent(archivoSeleccionado)}` : url
+      window.open(urlConArchivo, "_blank")
     } catch (err: any) {
       alert("Error al generar notebook: " + (err?.message ?? "desconocido"))
     }
@@ -181,7 +182,6 @@ export default function ModeloDetalle() {
 
   /* -------- Acción: crear y subir notebook a Colab -------- */
   const handleCreateColabNotebook = async () => {
-
     const token = localStorage.getItem("auth_token")
 
     if (!token) {
@@ -193,12 +193,12 @@ export default function ModeloDetalle() {
     try {
       setCreatingColab(true)
       setColabLink(null)
-    
-      const res = await fetch(crearYSubirNotebook(modelId), {
+
+      const res = await fetch(crearYSubirNotebook(modelId, archivoSeleccionado ?? undefined), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`, // ✅ Enviar token JWT
+          Authorization: `Bearer ${token}`,
         },
       })
 
@@ -356,7 +356,6 @@ export default function ModeloDetalle() {
                           >
                             {String(children).replace(/\n$/, "")}
                           </SyntaxHighlighter>
-
                         )
                       },
                       // Mejorar el manejo de texto plano para caracteres especiales
@@ -471,19 +470,52 @@ export default function ModeloDetalle() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {data.archivos.map((f, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="font-medium">{f.archivo}</TableCell>
-                            <TableCell>{formatBytes(f.tamaño_bytes)}</TableCell>
-                            <TableCell title={f.colab_msg}>{f.colab_status}</TableCell>
-                            <TableCell title={f.recomendacion}>
-                              {f.variant === "?" ? <span className="text-yellow-400 text-lg">❓</span> : f.variant}
-                            </TableCell>
-                            <TableCell>
-                              <StarRating rank={f.rank} unknown={f.variant === "?"} />
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {data.archivos.map((f, i) => {
+                          const isOnnxFile = f.archivo.toLowerCase().endsWith(".onnx")
+                          const isSelectable = !isOnnxFile
+
+                          return (
+                            <TableRow
+                              key={i}
+                              onClick={isSelectable ? () => setArchivoSeleccionado(f.archivo) : undefined}
+                              className={`
+        ${isSelectable ? "cursor-pointer hover:bg-gray-50" : "cursor-not-allowed opacity-60"}
+        ${archivoSeleccionado === f.archivo ? "bg-orange-50 border-l-4 border-orange-400" : ""}
+        ${isSelectable && archivoSeleccionado !== f.archivo ? "hover:bg-blue-50" : ""}
+        transition-colors duration-200
+      `}
+                            >
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-2">
+                                  {f.archivo}
+                                  {archivoSeleccionado === f.archivo && (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                      ✓ Seleccionado
+                                    </span>
+                                  )}
+                                  {isOnnxFile && (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                      No compatible
+                                    </span>
+                                  )}
+                                </div>
+                                {isOnnxFile && (
+                                  <p className="text-xs text-red-600 mt-1">
+                                    Los modelos de este tipo no están disponibles por falta de compatibilidad
+                                  </p>
+                                )}
+                              </TableCell>
+                              <TableCell>{formatBytes(f.tamaño_bytes)}</TableCell>
+                              <TableCell title={f.colab_msg}>{f.colab_status}</TableCell>
+                              <TableCell title={f.recomendacion}>
+                                {f.variant === "?" ? <span className="text-yellow-400 text-lg">❓</span> : f.variant}
+                              </TableCell>
+                              <TableCell>
+                                <StarRating rank={f.rank} unknown={f.variant === "?"} />
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
                       </TableBody>
                     </Table>
                   </div>

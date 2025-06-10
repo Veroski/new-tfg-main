@@ -6,7 +6,6 @@ import os
 load_dotenv()
 
 class Settings(BaseSettings):
-    token: str
     client_id: str
     client_secret: str
     redirect_uri: str

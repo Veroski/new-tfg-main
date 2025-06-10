@@ -75,6 +75,7 @@ async def list_notebooks(db: Session = Depends(get_db), user = Depends(get_curre
 async def create_and_upload_notebook(
     request: Request,
     model_id: str,
+    selected_weight_file: str = None,  # <--- NUEVO
     db: Session = Depends(get_db),
     session_user: dict = Depends(get_current_user)
 ):
@@ -87,9 +88,9 @@ async def create_and_upload_notebook(
 
     try:
         from app.api.routes.hugging_face_routes import classifica_modelo_sync
-        model_info = await anyio.to_thread.run_sync(classifica_modelo_sync, model_id)
+        model_info = await anyio.to_thread.run_sync(classifica_modelo_sync, model_id, session_user.hf_token, selected_weight_file)
 
-        notebook = await anyio.to_thread.run_sync(create_notebook, model_id, model_info)
+        notebook = await anyio.to_thread.run_sync(lambda: create_notebook(model_id, model_info, user=db_user))
         if not isinstance(notebook, nbformat.NotebookNode):
             raise TypeError("create_notebook must return a nbformat.NotebookNode")
 

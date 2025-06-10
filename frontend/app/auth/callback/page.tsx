@@ -12,7 +12,7 @@ export default function AuthCallbackPage() {
     const token = new URLSearchParams(window.location.search).get("token")
     if (token) {
       setTokenFromOAuth(token)
-      router.push("/")
+      router.push("/perfil")
     } else {
       router.push("/auth/login")
     }

@@ -1,5 +1,5 @@
 # app/routes/user_routes.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.schemas.user_schema import UserCreate, UserUpdate, UserOut
 from app.crud import user_crud
@@ -39,3 +39,28 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     return db_user
 
 
+@router.get("/me/hf-token", response_model=str | None)
+def get_my_hf_token(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    🔐 Devuelve el Hugging Face token del usuario actual.
+    """
+    return user_crud.get_user_hf_token(db, user_id=current_user.id)
+
+
+@router.post("/me/hf-token", response_model=str)
+@router.put("/me/hf-token", response_model=str)
+def set_my_hf_token(
+    hf_token: str = Form(...),                     # 👈🏻  AHORA ES Form,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    🔐 Guarda o actualiza el Hugging Face token del usuario actual.
+    """
+    updated_user = user_crud.update_user_hf_token(db, user_id=current_user.id, hf_token=hf_token)
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return updated_user.hf_token
