@@ -1050,7 +1050,7 @@ def generate(prompt: str, **gen_kwargs) -> str:
         else:
             from textwrap import dedent
 
-            tokens = "max_new_tokens" if self.info.get('recommended_backend') == 'llama-cpp-python' else "max_tokens"
+            tokens = "max_new_tokens" if self.info.get('recommended_backend') != 'llama-cpp-python' else "max_tokens"
 
             return dedent(f"""
                 import ipywidgets as widgets
