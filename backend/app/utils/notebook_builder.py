@@ -55,7 +55,6 @@ class NotebookBuilder:
         self.add_prompt_cell()
         self.add_inference_cell()
         self.add_result_processing_cell()
-        self.add_sample_eval()
         self.add_footer()
         return self.nb
     
@@ -176,20 +175,11 @@ class NotebookBuilder:
             processing_cell = self._get_result_processing_cell(task, modality)
             self.nb.cells.append(nbf.v4.new_code_cell(processing_cell))
     
-    def add_sample_eval(self) -> None:
-        """Añade la celda de evaluación de muestra."""
-        eval_cell = self._sample_eval_cell(
-            self.info.get('task', ''), 
-            self.info.get('model_id', '')
-        )
-        if eval_cell:  # Solo añadir si hay contenido
-            self.nb.cells.append(nbf.v4.new_code_cell(eval_cell))
-    
     def add_footer(self) -> None:
         """Añade la celda de pie de página."""
         self.nb.cells.append(
             nbf.v4.new_markdown_cell(
-                "---\n✅ *Notebook generado automáticamente. ¡Disfruta!* / *Happy hacking!*"
+                "---\n✅ *Notebook generado automáticamente. ¡Disfruta!*"
             )
         )
     
@@ -1058,7 +1048,11 @@ def generate(prompt: str, **gen_kwargs) -> str:
                 """
             )
         else:
-            return dedent("""
+            from textwrap import dedent
+
+            tokens = "max_new_tokens" if self.info.get('recommended_backend') != 'llama-cpp-python' else "max_tokens"
+
+            return dedent(f"""
                 import ipywidgets as widgets
                 from IPython.display import display, clear_output
 
@@ -1099,17 +1093,20 @@ def generate(prompt: str, **gen_kwargs) -> str:
                     with output:
                         clear_output()
                         print("Generando...")
-                        result = generate(
-                            prompt_box.value, 
-                            max_new_tokens=max_tokens_slider.value,
-                            temperature=temperature_slider.value
-                        )
-                        print(f"Resultado: {result}")
+
+                        kwargs = {{
+                            "prompt": prompt_box.value,
+                            "temperature": temperature_slider.value,
+                            "{tokens}": max_tokens_slider.value
+                        }}
+
+                        result = generate(**kwargs)
+                        print(f"Resultado: {{result}}")
 
                 generate_button.on_click(on_generate_clicked)
                 display(prompt_box, max_tokens_slider, temperature_slider, generate_button, output)
-                """
-            )
+            """)
+
 
     def _get_inference_cell(self, task: str, modality: str) -> str:
         """Genera el contenido de la celda de inferencia."""
@@ -1147,28 +1144,6 @@ def generate(prompt: str, **gen_kwargs) -> str:
             )
         return ""
 
-    def _sample_eval_cell(self, task: str, model_id: str) -> str:
-        """Genera el contenido de la celda de evaluación de muestra."""
-        if task == "text-generation":
-            return dedent(
-                f"""
-                # Evaluación de muestra
-                sample_prompt = "¿Cuál es la capital de España?"
-                sample_output = generate(sample_prompt, max_new_tokens=50)
-                print(f"Prompt: {{sample_prompt}}\nOutput: {{sample_output}}")
-                """
-            )
-        elif task == "text-classification":
-            return dedent(
-                f"""
-                # Evaluación de muestra
-                sample_text = "Me encanta este producto, es fantástico."
-                sample_output = generate(sample_text)
-                print(f"Texto: {{sample_text}}\nClasificación: {{sample_output}}")
-                """
-            )
-        # Añadir más casos según sea necesario para otras tareas
-        return ""
 
 
 def create_notebook_builder(model_info: Dict[str, Any], user: dict = None) -> NotebookBuilder:
